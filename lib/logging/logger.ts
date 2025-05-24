@@ -31,17 +31,23 @@ const sanitizeDetails = (details: unknown): unknown => {
 
 class Logger {
   private static instance: Logger;
-  private clmUrl: string;
+  private clmUrl?: string; // Can be undefined if not configured
+  private isClmConfigured: boolean = false;
 
   private constructor() {
-    // Ensure this runs only in the browser
     if (typeof window !== 'undefined') {
-      const baseUrl = process.env.NEXT_PUBLIC_CLM_URL || 'http://localhost:9999';
-      this.clmUrl = `${baseUrl.replace(/\/$/, '')}/log`; // Ensure no double slashes and append /log
+      const clmEnvUrl = process.env.NEXT_PUBLIC_CLM_URL;
+      if (clmEnvUrl) {
+        this.clmUrl = `${clmEnvUrl.replace(/\/$/, '')}/log`;
+        this.isClmConfigured = true;
+      } else {
+        // CLM_URL not set, CLM logging will be disabled, fallback to console.
+        this.isClmConfigured = false;
+        console.info("Logger: NEXT_PUBLIC_CLM_URL not set. CLM logging disabled, will use console.");
+      }
     } else {
-      // Default for non-browser, though primarily client-side
-      const baseUrl = 'http://localhost:9999';
-      this.clmUrl = `${baseUrl.replace(/\/$/, '')}/log`;
+      // Non-browser environment, disable CLM and use console if methods are called.
+      this.isClmConfigured = false;
     }
   }
 
@@ -52,42 +58,58 @@ class Logger {
     return Logger.instance;
   }
 
+  // Helper to log to console based on level
+  private logToConsole(level: LogType, message: string, details?: unknown) {
+    const detailsToLog = details !== undefined ? [details] : [];
+    switch (level) {
+      case LogType.INFO:
+        console.info(message, ...detailsToLog);
+        break;
+      case LogType.SUCCESS:
+        console.log(`%c${message}`, 'color: green;', ...detailsToLog); // console.log for success with color
+        break;
+      case LogType.WARNING:
+        console.warn(message, ...detailsToLog);
+        break;
+      case LogType.ERROR:
+        console.error(message, ...detailsToLog);
+        break;
+      default:
+        console.log(message, ...detailsToLog);
+    }
+  }
+
   private async sendToCLM(level: LogType, message: string, details?: unknown): Promise<void> {
-    // Do not attempt to log if not in a browser environment (where fetch is available)
-    // or if clmUrl is not set (though it has a default).
-    if (typeof window === 'undefined' || !this.clmUrl) {
-      // Optionally, log to console if CLM is not available or in non-browser context
-      // console.log(`[${logTypeToString(level)}] (CLM Disabled): ${message}`, details);
+    if (typeof window === 'undefined' || !this.isClmConfigured || !this.clmUrl) {
+      // Fallback to console if not in browser, CLM not configured, or clmUrl somehow missing
+      this.logToConsole(level, `(CLM Disabled) ${message}`, details);
       return;
     }
 
-    const payload: {
-      service: string;
-      level: string;
-      message: string;
-      details?: unknown;
-    } = {
+    const payload = {
       service: 'client',
       level: logTypeToString(level),
       message: message,
+      details: details !== undefined ? sanitizeDetails(details) : undefined,
     };
 
-    if (details !== undefined) {
-      payload.details = sanitizeDetails(details);
-    }
-
     try {
-      await fetch(this.clmUrl, {
+      const response = await fetch(this.clmUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        mode: 'cors', // Explicitly set mode for cross-origin requests
+        mode: 'cors',
       });
-      // console.info('Log sent to CLM:', payload);
+      if (!response.ok) {
+        // CLM responded with an error (e.g., 4xx, 5xx)
+        console.warn(`Failed to send log to CLM (HTTP ${response.status}):`, payload, await response.text());
+        this.logToConsole(level, `(CLM Send Fail) ${message}`, details); // Fallback to console
+      }
+      // If successful (2xx), do nothing more (no console log)
     } catch (error) {
-      console.warn('Failed to send log to CLM:', error, payload);
+      // Network error or other fetch issue
+      console.warn('Failed to send log to CLM (Network Error):', error, payload);
+      this.logToConsole(level, `(CLM Network Fail) ${message}`, details); // Fallback to console
     }
   }
 
