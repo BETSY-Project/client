@@ -5,7 +5,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLogger } from "@/hooks/useLogger";
 import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
 import { useState, useEffect } from "react";
-import { generateRoomName } from "@/lib/utils/room-utils";
 import { startAgentSession, stopAgentSession } from "@/lib/services/agent-api";
 import { getLiveKitToken } from "@/lib/services/livekit-api";
 
@@ -13,10 +12,9 @@ export function ConversationController() {
   const { logInfo, logError, logSuccess } = useLogger();
 
   const [instructions, setInstructions] = useState("");
-  const [currentRoomName, setCurrentRoomName] = useState<string>("");
   
   const [isRoomConnected, setIsRoomConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false); // New state for connection attempt
+  const [isConnecting, setIsConnecting] = useState(false);
   const [isManualDisconnect, setIsManualDisconnect] = useState(false);
   
   const [token, setToken] = useState<string>("");
@@ -64,18 +62,18 @@ export function ConversationController() {
     
     const checkAgentApiAvailability = async () => {
       try {
-        const agentApiUrl = process.env.NEXT_PUBLIC_AGENT_API_URL;
-        if (!agentApiUrl) {
-          logError("Agent API URL not configured", {
-            missingEnvVar: 'NEXT_PUBLIC_AGENT_API_URL'
+        const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
+        if (!serverUrl) {
+          logError("Server API URL not configured", {
+            missingEnvVar: 'NEXT_PUBLIC_SERVER_URL'
           });
           return;
         }
         
-        logInfo("Checking agent API availability", { url: agentApiUrl });
+        logInfo("Checking server API availability", { url: serverUrl });
         
         try {
-          const response = await fetch(`${agentApiUrl}/health`);
+          const response = await fetch(`${serverUrl}/health`);
           
           if (response.ok) {
             const data = await response.json();
@@ -90,13 +88,13 @@ export function ConversationController() {
             });
           }
         } catch (fetchError) {
-          logError("Failed to reach agent API", { 
+          logError("Failed to reach server API", {
             error: fetchError,
-            url: agentApiUrl
+            url: serverUrl
           });
         }
       } catch (error) {
-        logError("Error checking agent API", { error });
+        logError("Error checking server API", { error });
       }
     };
     
@@ -121,36 +119,29 @@ export function ConversationController() {
     });
     
     try {
-
-      let roomToUse = currentRoomName;
-      if (!roomToUse) {
-        roomToUse = generateRoomName();
-        logInfo(`ConversationController: Generated unique room name: ${roomToUse}`);
-        setCurrentRoomName(roomToUse);
+      logInfo(`ConversationController: Requesting LiveKit token from backend.`);
+      const { token: newToken, livekitUrl: newServerUrl, roomName: newRoomName, identity: newIdentity } = await getLiveKitToken();
+      
+      if (!newToken || !newServerUrl || !newRoomName || !newIdentity) {
+        logError("ConversationController: Failed to get valid token, URL, room name, or identity from backend.");
+        throw new Error("Failed to get valid token, URL, room name, or identity from backend");
       }
       
-      const identity = crypto.randomUUID();
-      logInfo(`ConversationController: Requesting LiveKit token for room: ${roomToUse}, identity: ${identity}`);
-      const { token: newToken, url: newUrl } = await getLiveKitToken(identity, roomToUse);
-      
-      logInfo("ConversationController: Starting agent session via API with instructions and room name.");
-      startAgentSession(instructions, roomToUse)
+      logInfo("ConversationController: Received token, URL, room name, and identity from backend.", { roomName: newRoomName, identity: newIdentity });
+      setToken(newToken);
+      setServerUrl(newServerUrl);
+      setActiveRoomName(newRoomName);
+
+      logInfo("ConversationController: Starting agent session via API with instructions and room name.", { roomName: newRoomName });
+      // Pass the roomName obtained from the backend to startAgentSession
+      startAgentSession(instructions, newRoomName)
         .then(() => {
-          logSuccess("ConversationController: Agent session started successfully (async).");
+          logSuccess(`ConversationController: Agent session started successfully (async) for room ${newRoomName}.`);
         })
         .catch((agentError) => {
-          logError("ConversationController: Failed to start agent session (async).", { error: agentError });
+          logError(`ConversationController: Failed to start agent session (async) for room ${newRoomName}.`, { error: agentError });
         });
 
-      if (newToken && newUrl) {
-        logInfo("ConversationController: Received token and URL.", { roomName: roomToUse });
-        setToken(newToken);
-        setServerUrl(newUrl);
-        setActiveRoomName(roomToUse); // Set activeRoomName for display and LiveKitRoom callbacks
-      } else {
-        logError("ConversationController: Failed to get valid token/URL.");
-        throw new Error("Failed to get valid token/URL");
-      }
     } catch (error) {
       logError("ConversationController: Failed to start conversation", { error });
       setToken("");
@@ -233,7 +224,7 @@ export function ConversationController() {
               onConnected={() => {
                 logSuccess("LiveKitRoom Component: Connected", { roomName: activeRoomName });
                 setIsRoomConnected(true);
-                setIsConnecting(false); // Clear connecting flag on successful connection
+                setIsConnecting(false);
                 setIsManualDisconnect(false);
               }}
               onDisconnected={(reason) => {
@@ -243,7 +234,7 @@ export function ConversationController() {
                   wasManualDisconnect: isManualDisconnect
                 });
                 setIsRoomConnected(false);
-                setIsConnecting(false); // Clear connecting flag if disconnected for any reason
+                setIsConnecting(false);
                 if (!isManualDisconnect) {
                   setToken("");
                   setServerUrl("");
@@ -255,7 +246,7 @@ export function ConversationController() {
                   roomName: activeRoomName,
                 });
                 setIsRoomConnected(false);
-                setIsConnecting(false); // Clear connecting flag on error
+                setIsConnecting(false);
                 setToken("");
                 setServerUrl("");
               }}
