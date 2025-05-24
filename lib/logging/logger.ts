@@ -10,6 +10,7 @@ const logTypeToString = (logType: LogType): string => {
     case LogType.SUCCESS: return 'success';
     case LogType.WARNING: return 'warning';
     case LogType.ERROR: return 'error';
+    case LogType.DEBUG: return 'debug';
     default: return 'info'; // Default to info
   }
 };
@@ -74,6 +75,9 @@ class Logger {
       case LogType.ERROR:
         console.error(message, ...detailsToLog);
         break;
+      case LogType.DEBUG:
+        console.debug(message, ...detailsToLog);
+        break;
       default:
         console.log(message, ...detailsToLog);
     }
@@ -127,6 +131,10 @@ class Logger {
 
   public warn = async (message: string, details?: unknown): Promise<void> => {
     await this.sendToCLM(LogType.WARNING, message, details);
+  };
+
+  public debug = async (message: string, details?: unknown): Promise<void> => {
+    await this.sendToCLM(LogType.DEBUG, message, details);
   };
 }
 

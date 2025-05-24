@@ -5,5 +5,6 @@ export enum LogType {
   INFO = 'info',
   ERROR = 'error',
   SUCCESS = 'success',
-  WARNING = 'warning'
+  WARNING = 'warning',
+  DEBUG = 'debug'
 }

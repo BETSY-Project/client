@@ -1,4 +1,4 @@
-# BETSY
+# BETSY (client)
 ## Built to Elevate, Train & Speak with You.
 
 > Talk your way to fluency.

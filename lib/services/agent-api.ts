@@ -8,7 +8,7 @@ const AGENT_API_URL = process.env.NEXT_PUBLIC_AGENT_API_URL || "http://localhost
 
 /**
  * Starts a new agent session with the provided instructions and room name
- * @param instructions System prompt instructions for the language teacher
+ * @param instructions System prompt instructions for the teacher
  * @param roomName LiveKit room name to join
  * @returns Response from the agent API
  */
