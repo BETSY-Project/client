@@ -1,232 +1,115 @@
-import { LogEntry, LogStorage, LogType } from './types';
-import { IndexedDBLogStorage } from './indexed-db-storage';
+import { LogType } from './types';
+// LogEntry type is no longer used internally by this simplified logger,
+// but might be used by consumers if they were previously relying on it.
+// For a fully self-contained CLM-only logger, this export could also be removed.
 
-// Custom event for log updates
-export interface LogUpdateEvent {
-  type: 'add' | 'clear';
-  entry?: LogEntry;
-}
+// Helper to convert LogType enum to string for CLM
+const logTypeToString = (logType: LogType): string => {
+  switch (logType) {
+    case LogType.INFO: return 'info';
+    case LogType.SUCCESS: return 'success';
+    case LogType.WARNING: return 'warning';
+    case LogType.ERROR: return 'error';
+    default: return 'info'; // Default to info
+  }
+};
 
-// Type for log update listeners
-type LogUpdateListener = (event: LogUpdateEvent) => void;
+// Sanitize details for JSON stringification
+const sanitizeDetails = (details: unknown): unknown => {
+  try {
+    // Basic sanitization: handle circular refs by stringifying/parsing
+    return JSON.parse(JSON.stringify(details));
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (e) {
+    // If complex object fails, try to get a string representation
+    if (details instanceof Error) {
+      return { name: details.name, message: details.message, stack: details.stack };
+    }
+    return String(details);
+  }
+};
 
-/**
- * Logger service
- * Provides methods for logging messages and accessing logs
- */
 class Logger {
-  private storage: LogStorage;
   private static instance: Logger;
-  private listeners: LogUpdateListener[] = [];
+  private clmUrl: string;
 
-  private constructor(storage: LogStorage) {
-    this.storage = storage;
-  }
-  
-  /**
-   * Subscribe to log updates
-   * @param listener - Callback function to be called when logs are updated
-   * @returns Unsubscribe function
-   */
-  public subscribe(listener: LogUpdateListener): () => void {
-    this.listeners.push(listener);
-    
-    // Return unsubscribe function
-    return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
-    };
-  }
-  
-  /**
-   * Notify all listeners of a log update
-   */
-  private notifyListeners(event: LogUpdateEvent): void {
-    this.listeners.forEach(listener => listener(event));
+  private constructor() {
+    // Ensure this runs only in the browser
+    if (typeof window !== 'undefined') {
+      const baseUrl = process.env.NEXT_PUBLIC_CLM_URL || 'http://localhost:9999';
+      this.clmUrl = `${baseUrl.replace(/\/$/, '')}/log`; // Ensure no double slashes and append /log
+    } else {
+      // Default for non-browser, though primarily client-side
+      const baseUrl = 'http://localhost:9999';
+      this.clmUrl = `${baseUrl.replace(/\/$/, '')}/log`;
+    }
   }
 
-  /**
-   * Get logger instance (singleton)
-   */
   public static getInstance(): Logger {
     if (!Logger.instance) {
-      let storage: LogStorage;
-      
-      // Check if we're in a browser environment
-      if (typeof window === 'undefined') {
-        // Create a no-op storage for server-side
-        storage = {
-          store: async (entry) => ({ ...entry, id: 'server-' + Date.now() }),
-          getAll: async () => [],
-          getByType: async () => [],
-          clear: async () => {},
-          count: async () => 0
-        };
-      } else {
-        // We use IndexedDB storage in the browser
-        storage = new IndexedDBLogStorage();
-      }
-      
-      Logger.instance = new Logger(storage);
+      Logger.instance = new Logger();
     }
     return Logger.instance;
   }
 
-  /**
-   * Set custom storage implementation
-   */
-  public setStorage(storage: LogStorage): void {
-    this.storage = storage;
-  }
+  private async sendToCLM(level: LogType, message: string, details?: unknown): Promise<void> {
+    // Do not attempt to log if not in a browser environment (where fetch is available)
+    // or if clmUrl is not set (though it has a default).
+    if (typeof window === 'undefined' || !this.clmUrl) {
+      // Optionally, log to console if CLM is not available or in non-browser context
+      // console.log(`[${logTypeToString(level)}] (CLM Disabled): ${message}`, details);
+      return;
+    }
 
-  /**
-   * Log an info message
-   */
-  public async info(message: string, details?: unknown): Promise<LogEntry> {
-    return this.log(LogType.INFO, message, details);
-  }
+    const payload: {
+      service: string;
+      level: string;
+      message: string;
+      details?: unknown;
+    } = {
+      service: 'client',
+      level: logTypeToString(level),
+      message: message,
+    };
 
-  /**
-   * Log an error message
-   */
-  public async error(message: string, details?: unknown): Promise<LogEntry> {
-    return this.log(LogType.ERROR, message, details);
-  }
+    if (details !== undefined) {
+      payload.details = sanitizeDetails(details);
+    }
 
-  /**
-   * Log a success message
-   */
-  public async success(message: string, details?: unknown): Promise<LogEntry> {
-    return this.log(LogType.SUCCESS, message, details);
-  }
-  
-  /**
-   * Log a warning message
-   */
-  public async warn(message: string, details?: unknown): Promise<LogEntry> {
-    return this.log(LogType.WARNING, message, details);
-  }
-
-  /**
-   * General log method
-   */
-  private async log(type: LogType, message: string, details?: unknown): Promise<LogEntry> {
     try {
-      const logEntry: Omit<LogEntry, 'id'> = {
-        timestamp: Date.now(),
-        type,
-        message,
-        details: details ? this.sanitizeDetails(details) : undefined
-      };
-      
-      // Store the log in persistent storage
-      const storedEntry = await this.storage.store(logEntry);
-      
-      // Notify all listeners about the new log
-      this.notifyListeners({
-        type: 'add',
-        entry: storedEntry
+      await fetch(this.clmUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        mode: 'cors', // Explicitly set mode for cross-origin requests
       });
-      
-      return storedEntry;
+      // console.info('Log sent to CLM:', payload);
     } catch (error) {
-      // If we can't store the log, log to console as fallback
-      console.error('Failed to store log entry:', error);
-      console.log(`[${type}] ${message}`, details);
-      
-      // Create a temporary log entry
-      const tempEntry = {
-        id: 'temp-' + Date.now(),
-        timestamp: Date.now(),
-        type,
-        message,
-        details: this.sanitizeDetails(details)
-      };
-      
-      // Notify listeners even for temporary entries
-      this.notifyListeners({
-        type: 'add',
-        entry: tempEntry
-      });
-      
-      return tempEntry;
+      console.warn('Failed to send log to CLM:', error, payload);
     }
   }
 
-  /**
-   * Sanitize details to ensure they can be stored in IndexedDB
-   * This handles circular references and functions
-   */
-  private sanitizeDetails(details: unknown): unknown {
-    try {
-      // Use JSON.stringify/parse to remove circular references and non-serializable values
-      return JSON.parse(JSON.stringify(details));
-    } catch (error) {
-      // If serialization fails, return a simplified representation
-      if (details instanceof Error) {
-        return {
-          name: details.name,
-          message: details.message,
-          stack: details.stack
-        };
-      }
-      
-      return String(details);
-    }
-  }
+  public info = async (message: string, details?: unknown): Promise<void> => {
+    await this.sendToCLM(LogType.INFO, message, details);
+  };
 
-  /**
-   * Get all logs
-   */
-  public async getAllLogs(): Promise<LogEntry[]> {
-    try {
-      return await this.storage.getAll();
-    } catch (error) {
-      console.error('Failed to retrieve logs:', error);
-      return [];
-    }
-  }
+  public error = async (message: string, details?: unknown): Promise<void> => {
+    await this.sendToCLM(LogType.ERROR, message, details);
+  };
 
-  /**
-   * Get logs by type
-   */
-  public async getLogsByType(type: LogType): Promise<LogEntry[]> {
-    try {
-      return await this.storage.getByType(type);
-    } catch (error) {
-      console.error(`Failed to retrieve ${type} logs:`, error);
-      return [];
-    }
-  }
+  public success = async (message: string, details?: unknown): Promise<void> => {
+    await this.sendToCLM(LogType.SUCCESS, message, details);
+  };
 
-  /**
-   * Clear all logs
-   */
-  public async clearLogs(): Promise<void> {
-    try {
-      await this.storage.clear();
-      
-      // Notify all listeners that logs have been cleared
-      this.notifyListeners({ type: 'clear' });
-    } catch (error) {
-      console.error('Failed to clear logs:', error);
-    }
-  }
-
-  /**
-   * Get logs count
-   */
-  public async getLogsCount(): Promise<number> {
-    try {
-      return await this.storage.count();
-    } catch (error) {
-      console.error('Failed to count logs:', error);
-      return 0;
-    }
-  }
+  public warn = async (message: string, details?: unknown): Promise<void> => {
+    await this.sendToCLM(LogType.WARNING, message, details);
+  };
 }
 
 // Export a singleton instance
 export const logger = Logger.getInstance();
 
-// Re-export types
-export { LogType, LogEntry };
+// Re-export LogType for consumers
+export { LogType };

@@ -42,27 +42,6 @@ next-env.d.ts
 # DOC MODULES
 _doc_modules
 
-# PYTHON GENERATED FILES
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
-
 # IDE FILES
 .idea/
 .vscode/

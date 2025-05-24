@@ -2,14 +2,14 @@
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useLogger } from "@/hooks/useLogger";
+import { logger } from "@/lib/logging/logger";
 import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
 import { useState, useEffect } from "react";
 import { startAgentSession, stopAgentSession } from "@/lib/services/agent-api";
 import { getLiveKitToken } from "@/lib/services/livekit-api";
 
 export function ConversationController() {
-  const { logInfo, logError, logSuccess } = useLogger();
+  const { info: logInfo, error: logError, success: logSuccess } = logger;
 
   const [instructions, setInstructions] = useState("");
   
@@ -100,7 +100,7 @@ export function ConversationController() {
     
     checkAudioCapabilities();
     checkAgentApiAvailability();
-  }, [logError, logSuccess, logInfo]);
+  }, []);
 
   const handleStart = async () => {
     if (isRoomConnected || isConnecting) {
